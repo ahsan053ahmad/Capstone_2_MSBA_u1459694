@@ -26,6 +26,7 @@ My work was pivotal in providing a statistical foundation for predictive mainten
 1. **Data Cleaning and Exploration**: Addressed significant data quality issues, such as missing values in critical fields (e.g., equipment IDs), through imputation and preprocessing techniques.
 2. **Kaplan-Meier Survival Curves**: Generated survival curves to model the probability of equipment functioning over time at Varying Levels of Detail: From Functional Area to Equipment Types to Equipment IDs.
 3. **Cox Proportional Hazards Model**: Utilized this model to evaluate the relative risk of failure, quantifying the impact of predictors like machine age, usage intensity, and environmental conditions.
+
 These analyses provided actionable insights into which equipment types and locations were most prone to failures, guiding proactive maintenance planning.
 
 ## **Business Value**
