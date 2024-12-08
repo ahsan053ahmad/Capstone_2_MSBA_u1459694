@@ -1,0 +1,270 @@
+---
+title: "Exploratory Data Analysis"
+author: "Ahsan Ahmad"
+date: "2024-10-04"
+output: 
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+
+```
+
+# Introduction
+
+Swire Coca-Cola faces a significant production shortfall across its six facilities, producing only 94.4% of its intended 192 million cases annually due to unplanned machinery breakdowns. These unexpected failures result in approximately $60 million in lost productivity each year. The current reactive maintenance process, reliant on an Internal Warehouse Controller (IWC) system that issues work orders only after breakdowns occur, creates delays in repairs and extends downtime.
+
+To address this issue, a predictive maintenance solution is proposed through Survival Analysis. By forecasting when machinery failures are likely to happen, Swire Coca-Cola can proactively schedule maintenance, minimize unplanned downtimes, and ensure optimal production efficiency.
+
+This notebook is created after doing a reiterative process of evaluating data and only the final results are published that answer the following questions in the data story:
+
+1. What are the distributions of the important variables in the dataset?
+2. What are the basic summary statistics (mean, median, standard deviation, etc.) for each important predictor?
+3. How to select a few most important and relevant predictors from the dataset?
+4. Are there any missing values in the dataset? What method is used to clean the Data and remove them?
+5. What are the relationships between different variables in the dataset? Are there any strong correlations that suggests potential predictive relationships?
+6. How can the data be visualized to better understand its characteristics? e.g. creating different plots using ggplot like histograms, scatter plots, box plots, heatmaps etc.
+
+# Description of the data
+
+Initially a data set of 1,427,264 observations has been given by Swire which contains one identifier column (Order_ID) and 24 predictor variables. In this section we will produce summary statistics of the whole data and try to create insights from it. 
+
+```{r}
+# Load Data and packages
+library(tidyverse) #load libraries for project
+library(dplyr) 
+library(ggplot2)
+library(tidyr)
+library(rpart)
+library(rpart.plot)
+library(skimr)
+library(janitor)
+library(corrplot)
+library(lubridate)
+library(survival)
+library(survminer)
+library(readr)
+library(VIM)
+
+data <- read.csv("IWC_Work_Orders_Extract.csv")
+
+# Checking the data to look for Length, Min, Max, Mean, Outliers etc
+
+str(data)
+
+summary(data)
+
+# Displaying the first few rows of data
+head(data)
+
+```
+
+# Data Cleaning and Preprocessing
+
+## Handling Missing Data
+
+```{r}
+# Display the number of NA values per column
+
+missing_values <- colSums(is.na(data))
+print(missing_values)
+
+# Imputing Missing Equipment IDs and Maintenance Items with the preceding values using fill()
+
+data <- data %>%
+  arrange(EQUIPMENT_ID, EXECUTION_START_DATE) %>%  #Ensuring the data is ordered correctly by equipment and date
+  fill(EQUIPMENT_ID, MAINTENANCE_ITEM, .direction = "down")
+
+# Chceking for missing values again
+
+na_values <- colSums(is.na(data))
+print(na_values)
+
+```
+
+The above numbers show that about 90% of the column "MAINTENANCE_ITEM" contains NA values and about 80% of the column "EQUIPMENT_ID" contains NA values. The high percentage of NA values are probably due to the reason that there are around 60 smaller components for each of the equipment. Therefore, we can't remove these rows nor can we impute any ID numbers for these values. For the sake of this EDA and to prepare data for survival analysis let's assume that the Equipment ID is the same as the preceding one before NA values since it might be possible as one Equipment ID is associated with approximately 60 smaller components.
+
+
+## Changing Column Data Types
+
+```{r}
+# Converting Date and Time Columns to type "Date" and Minutes accordingly
+
+data <- data %>% 
+  mutate(
+    EXECUTION_START_DATE = as.Date(EXECUTION_START_DATE, format = "%Y-%m-%d"),
+    EXECUTION_FINISH_DATE = as.Date(EXECUTION_FINISH_DATE, format = "%Y-%m-%d"),
+    EQUIP_START_UP_DATE = as.Date(EQUIP_START_UP_DATE, format = "%Y-%m-%d"),
+    EQUIP_VALID_FROM = as.Date(EQUIP_VALID_FROM, format = "%Y-%m-%d"),
+    EQUIP_VALID_TO = as.Date(EQUIP_VALID_TO, format = "%Y-%m-%d"),
+    ACTUAL_START_TIME = hms(ACTUAL_START_TIME),
+    ACTUAL_FINISH_TIME = hms(ACTUAL_FINISH_TIME)
+  )
+
+# Converting Non-Numeric and non-date type variables to factor
+data <- data %>% 
+  mutate(
+    PLANT_ID = factor(PLANT_ID),
+    PRODUCTION_LOCATION = factor(PRODUCTION_LOCATION),
+    MAINTENANCE_ACTIVITY_TYPE = factor(MAINTENANCE_ACTIVITY_TYPE),
+    MAINTENANCE_TYPE_DESCRIPTION = factor(MAINTENANCE_TYPE_DESCRIPTION),
+    FUNCTIONAL_AREA_NODE_1_MODIFIED = factor(FUNCTIONAL_AREA_NODE_1_MODIFIED),
+    FUNCTIONAL_AREA_NODE_2_MODIFIED = factor(FUNCTIONAL_AREA_NODE_2_MODIFIED),
+    FUNCTIONAL_AREA_NODE_3_MODIFIED = factor(FUNCTIONAL_AREA_NODE_3_MODIFIED),
+    FUNCTIONAL_AREA_NODE_4_MODIFIED = factor(FUNCTIONAL_AREA_NODE_4_MODIFIED),
+    FUNCTIONAL_AREA_NODE_5_MODIFIED = factor(FUNCTIONAL_AREA_NODE_5_MODIFIED),
+    EQUIP_CAT_DESC = factor(EQUIP_CAT_DESC),
+    MAINTENANCE_PLAN = factor(MAINTENANCE_PLAN),
+    EQUIPMENT_ID = factor(EQUIPMENT_ID),
+    MAINTENANCE_ITEM = factor(MAINTENANCE_ITEM)
+  )
+
+# Looking for the summary again for the new data
+
+summary(data)
+```
+
+
+## Creating variables to prepare data for survival analysis
+
+```{r}
+# Failure - A binary variable that is 1 if there was a machine failure and 0 otherwise
+
+data <- data %>% 
+  mutate(
+    failure = ifelse(MAINTENANCE_ACTIVITY_TYPE == "Unplanned", 1, 0)
+  )
+
+# Sorting data by Equipment ID and execution start date to extract the time taken for failure to occur
+data <- data %>% 
+  arrange(EQUIPMENT_ID, EXECUTION_START_DATE)
+
+# Calculating the time since failure and time since installation for each Equipment
+data <- data %>% 
+  group_by(EQUIPMENT_ID) %>% 
+  mutate(
+    time_since_failure = as.numeric(difftime(EXECUTION_START_DATE, lag(EXECUTION_START_DATE), units = "days")),
+    time_since_installation = as.numeric(difftime(EXECUTION_START_DATE, EQUIP_VALID_FROM, units = "days"))
+  ) %>% 
+  ungroup()
+
+# Looking at the new variables by getting the summary of the data again
+summary(data)
+
+```
+
+The summary above tells us that almost 90% of maintenance is unplanned and occurs due to failure in an equipment or it's part. The time since failure has a low mean of around 3 days since a lot of the Equipment ID's were imputed with 400029000 and hence the failure time for them are calculated as zero.
+
+# Exploratory Data Visualizations
+
+For the sake of showing data patterns through visualizations we are going to take out the 400029000 that we imputed. We will start with some univariate analysis of important variables and than will move to bivariate and multivariate analysis. 
+
+
+```{r}
+# Removing Equipment ID 400029000 and Outliers from the data set
+
+data_clean <- data %>% 
+  filter(EQUIPMENT_ID != 400029000) %>% 
+  filter(ACTUAL_WORK_IN_MINUTES < 20000) %>% 
+  mutate(failure = factor(failure)) %>% 
+  filter(time_since_installation > 0)
+
+# Checking the summary characteristics of the clean data
+summary(data_clean)
+
+# Histogram of Actual Work in Minutes
+
+ggplot(data = data_clean,
+       mapping = aes(x = ACTUAL_WORK_IN_MINUTES)) +
+  geom_histogram() +
+  labs(title = "Distribution of Actual Work Time in Minutes",
+       x = "Actual Work Time (Minutes)", y = "Frequency")
+
+```
+
+
+```{r}
+
+# Scatter plot between two continuous variable with target as color
+data_clean %>% 
+  ggplot(mapping = aes(x = time_since_installation, y = time_since_failure, color = failure)) +
+  geom_point() +
+  labs(title = "Scatterplot of time_since_failure vs time_since_installation by failure")
+
+```
+
+It can be seen from the scatter plot above that as the time since equipment is installed increases, the time between failures is more at the start and end of the graph meaning that the equipments are either performing without failure at the start when they are initially installed or at the end of their lifecycle probably due to good planned maintenance.
+
+```{r}
+
+# Bar Chart between MAINTENANCE_ACTIVITY_TYPE and PRODUCTION_LOCATION by failure
+
+data_clean %>%
+  ggplot(mapping = aes(x = PRODUCTION_LOCATION, fill = failure)) +
+  geom_bar(position = "dodge") +
+  facet_wrap(~ MAINTENANCE_ACTIVITY_TYPE) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(angle = 0)) +
+  labs(title = "Distribution of MAINTENANCE_ACTIVITY_TYPE and PRODUCTION_LOCATION by failure",
+       x = "PRODUCTION_LOCATION",
+       y = "Count",
+       fill = "failure")
+
+```
+
+The above bar charts show that MONZA had the most Planned Scheduled Maintenance and hence comparatively low Failure rate while COTA had little planned maintenance and hence it had the highest failure rate.
+
+```{r}
+# Heatmap between FUNCTIONAL_AREA_2 and failure
+
+data_clean %>%
+  count(FUNCTIONAL_AREA_NODE_2_MODIFIED, failure) %>%
+  ggplot(mapping = aes(x = FUNCTIONAL_AREA_NODE_2_MODIFIED, y = failure)) +
+  geom_tile(mapping = aes(fill = n)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(angle = 0)) +
+  labs(title = "Heatmap between FUNCTIONAL_AREA_2 and failure")
+
+```
+
+From the heatmap above it can be seen that the highest number of failures occurred in CAN_LINE and the highest number of planned maintenance occurred in BTL_PET_LINE.
+
+
+```{r}
+
+# Boxplot of time_since_failure across Maintenance Activity Types
+ggplot(data_clean, aes(x = EQUIP_CAT_DESC, y = time_since_failure)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Time Since Failure by Equipment Category Description", x = "Equipment Category", y = "Time Since Failure")
+
+
+```
+
+From the Box and Whiskers plot above it can be denoted that Machines have a higher time since failure than other equipment categories hence it can be suggested that equipments are a little more reliable than other equipment categories although it can be due to more outliers in the machine category and more data is required to show if the machines fail less often than other equipment categories.
+
+
+```{r}
+# Heatmap between FUNCTIONAL_AREA_4 and failure
+
+data_clean %>%
+  count(FUNCTIONAL_AREA_NODE_4_MODIFIED, failure) %>%
+  ggplot(mapping = aes(x = FUNCTIONAL_AREA_NODE_4_MODIFIED, y = failure)) +
+  geom_tile(mapping = aes(fill = n)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(angle = 0)) +
+  labs(title = "Heatmap between FUNCTIONAL_AREA_4 and failure")
+
+```
+
+From the above heatmap it can be denoted that for Functional Area Node 4, the FILLER had the most planned scheduled maintenance but it is also the one that failed the most. Quite Alarming!
+
+
+# Results, Findings and Conclusion
+
+The exploratory data analysis (EDA) on Swire's dataset, containing over 1.4 million observations, revealed significant missing values in some key columns like "MAINTENANCE_ITEM" (90% missing) and "EQUIPMENT_ID" (80% missing). To proceed with the analysis, missing equipment IDs were imputed based on preceding values, assuming that a single Equipment ID may represent multiple components.
+
+Nearly 90% of the maintenance was unplanned, suggesting heavy reliance on reactive maintenance. After doing data cleaning some patterns emerged showing that newly installed equipment tends to perform well without failures, and equipment with planned maintenance towards the end of its lifecycle also experienced fewer failures. Plants with more scheduled maintenance, like MONZA, had lower failure rates, while COTA, with less planned maintenance, had higher failure rates.
+
+Additionally, specific equipment categories like CAN_LINE showed higher failure rates, while BTL_PET_LINE had more scheduled maintenance. A notable and alarming observation was that FILLER equipment in Functional Area Node 4, despite receiving the most planned maintenance, had the highest failure rate. This indicates a need to reassess the effectiveness of the current maintenance approach and maybe replace that machine since a high amount of preventive maintenance isn't enough. Overall, the analysis provides insights that could help improve preventive maintenance strategies and enhance equipment reliability and decrease the time since failure.

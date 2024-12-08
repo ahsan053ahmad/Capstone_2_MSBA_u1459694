@@ -1,0 +1,342 @@
+---
+title: "Survival_2"
+author: "Ahsan Ahmad"
+date: "2024-11-18"
+output: 
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+
+```
+
+# Introduction
+
+Swire Coca-Cola faces a significant production shortfall across its six facilities, producing only 94.4% of its intended 192 million cases annually due to unplanned machinery breakdowns. These unexpected failures result in approximately $60 million in lost productivity each year. The current reactive maintenance process, reliant on an Internal Warehouse Controller (IWC) system that issues work orders only after breakdowns occur, creates delays in repairs and extends downtime.
+
+To address this issue, a predictive maintenance solution is proposed through Survival Analysis. By forecasting when machinery failures are likely to happen, Swire Coca-Cola can proactively schedule maintenance, minimize unplanned downtimes, and ensure optimal production efficiency.
+
+This notebook is created after doing a reiterative process of evaluating data and only the final results are published that answer the following questions in the data story:
+
+1. What are the distributions of the important variables in the dataset?
+2. What are the basic summary statistics (mean, median, standard deviation, etc.) for each important predictor?
+3. How to select a few most important and relevant predictors from the dataset?
+4. Are there any missing values in the dataset? What method is used to clean the Data and remove them?
+5. What are the relationships between different variables in the dataset? Are there any strong correlations that suggests potential predictive relationships?
+6. How can the data be visualized to better understand its characteristics? e.g. creating different plots using ggplot like histograms, scatter plots, box plots, heatmaps etc.
+
+# Description of the data
+
+Initially a data set of 1,427,264 observations has been given by Swire which contains one identifier column (Order_ID) and 24 predictor variables. In this section we will produce summary statistics of the whole data and try to create insights from it. 
+
+```{r}
+# Load Data and packages
+library(tidyverse) #load libraries for project
+library(dplyr) 
+library(ggplot2)
+library(tidyr)
+library(rpart)
+library(rpart.plot)
+library(skimr)
+library(janitor)
+library(corrplot)
+library(lubridate)
+library(survival)
+library(survminer)
+library(readr)
+library(VIM)
+
+data <- read.csv("IWC_Work_Orders_Extract.csv")
+
+# Checking the data to look for Length, Min, Max, Mean, Outliers etc
+
+str(data)
+
+summary(data)
+
+# Displaying the first few rows of data
+head(data)
+
+```
+
+# 1. Data Cleaning and Preparation
+
+```{r}
+# Converting Date and Time Columns to type "Date" and Minutes accordingly
+
+data <- data %>% 
+  mutate(
+    EXECUTION_START_DATE = as.Date(EXECUTION_START_DATE, format = "%Y-%m-%d"),
+    EXECUTION_FINISH_DATE = as.Date(EXECUTION_FINISH_DATE, format = "%Y-%m-%d"),
+    EQUIP_START_UP_DATE = as.Date(EQUIP_START_UP_DATE, format = "%Y-%m-%d"),
+    EQUIP_VALID_FROM = as.Date(EQUIP_VALID_FROM, format = "%Y-%m-%d"),
+    EQUIP_VALID_TO = as.Date(EQUIP_VALID_TO, format = "%Y-%m-%d"),
+    ACTUAL_START_TIME = hms(ACTUAL_START_TIME),
+    ACTUAL_FINISH_TIME = hms(ACTUAL_FINISH_TIME)
+  )
+
+# Converting Non-Numeric and non-date type variables to factor
+data <- data %>% 
+  mutate(
+    PLANT_ID = factor(PLANT_ID),
+    PRODUCTION_LOCATION = factor(PRODUCTION_LOCATION),
+    MAINTENANCE_ACTIVITY_TYPE = factor(MAINTENANCE_ACTIVITY_TYPE),
+    MAINTENANCE_TYPE_DESCRIPTION = factor(MAINTENANCE_TYPE_DESCRIPTION),
+    FUNCTIONAL_AREA_NODE_1_MODIFIED = factor(FUNCTIONAL_AREA_NODE_1_MODIFIED),
+    FUNCTIONAL_AREA_NODE_2_MODIFIED = factor(FUNCTIONAL_AREA_NODE_2_MODIFIED),
+    FUNCTIONAL_AREA_NODE_3_MODIFIED = factor(FUNCTIONAL_AREA_NODE_3_MODIFIED),
+    FUNCTIONAL_AREA_NODE_4_MODIFIED = factor(FUNCTIONAL_AREA_NODE_4_MODIFIED),
+    FUNCTIONAL_AREA_NODE_5_MODIFIED = factor(FUNCTIONAL_AREA_NODE_5_MODIFIED),
+    EQUIP_CAT_DESC = factor(EQUIP_CAT_DESC),
+    MAINTENANCE_PLAN = factor(MAINTENANCE_PLAN),
+    EQUIPMENT_ID = factor(EQUIPMENT_ID),
+    MAINTENANCE_ITEM = factor(MAINTENANCE_ITEM)
+  )
+
+```
+
+# 2. Feature Engineering
+
+```{r}
+
+data <- data %>% 
+  mutate(failure = ifelse(MAINTENANCE_ACTIVITY_TYPE == "Unplanned", 1, 0)) %>% 
+  filter(!is.na(EQUIPMENT_ID))
+
+# Calculate time_to_failure
+filtered_data <- data %>%
+  arrange(EQUIPMENT_ID, EXECUTION_START_DATE) %>%        # Arrange by EQUIPMENT_ID and date
+  group_by(EQUIPMENT_ID) %>%                            # Group to calculate time differences within each EQUIPMENT_ID
+  mutate(
+    time_to_failure = ifelse(failure == 1, 
+                             as.numeric(difftime(EXECUTION_START_DATE, lag(EXECUTION_START_DATE), units = "days")), 
+                             0)
+  ) %>%
+  ungroup()                                             # Ungroup to return to original structure
+
+# Filter out rows where time_to_failure is NA (non-failure rows or first failure in sequence)
+failure_data <- filtered_data %>%
+  filter(!is.na(time_to_failure))
+
+censored_data <- filtered_data %>% 
+  filter(failure == 0)
+
+
+```
+
+
+```{r}
+
+hist(filtered_data$time_to_failure, breaks = 50, main = "Distribution of Time to Failure",
+     xlab = "Time to Failure (days)", col = "skyblue")
+
+
+```
+# 3. Survival Analysis
+
+## Create Survival Object
+
+```{r}
+# Create survival object
+surv_object <- Surv(time = filtered_data$time_to_failure, event = filtered_data$failure)
+
+```
+
+The survival object represents the core data structure for survival analysis, combining the time and event status for each functional area. This step prepares the data for Kaplan-Meier estimation and other survival analysis techniques.
+
+
+## Kaplan-Meier Estimator
+
+```{r}
+# Fit Kaplan-Meier survival model
+km_fit <- survfit(surv_object ~ 1)
+
+# Plot the survival curve
+ggsurvplot(km_fit, data = filtered_data, conf.int = TRUE, pval = TRUE,
+           title = "Kaplan-Meier Survival Curve",
+           xlab = "Time to Failure (Days)", ylab = "Survival Probability")
+
+```
+
+
+## Survival Analysis by Equipment_IDs
+
+```{r}
+# Filter the survival_data for relevant Equipment_IDs
+filtered_data <- filtered_data %>%
+  filter(FUNCTIONAL_AREA_NODE_2_MODIFIED != "G812 SHOP / REPAIR AREA")
+
+# Ensure `EQUIPMENT_ID` is a factor and sort levels for consistency
+filtered_data <- filtered_data %>%
+  mutate(EQUIPMENT_ID = as.factor(EQUIPMENT_ID))
+
+# Define the number of Equipment_IDs per plot
+num_ids_per_plot <- 5
+
+# Create a list to store plots
+plot_list_1 <- list()
+
+# Split filtered data into chunks of 5 Equipment_IDs each
+unique_ids <- unique(filtered_data$EQUIPMENT_ID)
+id_chunks <- split(unique_ids, ceiling(seq_along(unique_ids) / num_ids_per_plot))
+
+# Loop through each chunk, fit survival curves, and create plots
+for (i in seq_along(id_chunks)) {
+  
+  # Filter survival data for the current chunk of Equipment_IDs
+  group_data_1 <- filtered_data %>%
+    filter(EQUIPMENT_ID %in% id_chunks[[i]])
+  
+  # Skip if group_data_1 is empty or has all missing Avg_time_to_failure or failure
+  if (nrow(group_data_1) == 0 || all(is.na(group_data_1$time_to_failure)) || all(is.na(group_data_1$failure))) {
+    next  # Skip this group and move to the next one
+  }
+  
+  # Create a survival object for the group
+  surv_object_group_1 <- Surv(time = group_data_1$time_to_failure, event = group_data_1$failure)
+  
+  # Fit Kaplan-Meier survival curves for the group
+  km_fit_group_1 <- survfit(surv_object_group_1 ~ EQUIPMENT_ID, data = group_data_1)
+  
+  # Plot the survival curves for the group without p-value
+  plot_list_1[[i]] <- ggsurvplot(
+    km_fit_group_1, data = group_data_1, conf.int = TRUE, pval = TRUE,
+    title = paste("Survival Curves for Equipment IDs - Group", i),
+    xlab = "Time to Failure (Days)", ylab = "Survival Probability",
+    legend.title = "Equipment IDs",
+    legend = "right",
+    ggtheme = theme_minimal(base_size = 10),
+    font.legend = 8,
+    palette = "Dark2"
+  )
+}
+
+# Display all plots in plot_list_1, skipping any empty entries
+for (i in seq_along(plot_list_1)) {
+  if (!is.null(plot_list_1[[i]])) {
+    print(plot_list_1[[i]])
+  }
+}
+
+```
+
+
+## Survival Analysis by Equipment Type
+
+```{r}
+library(gridExtra)
+
+survival_data <- filtered_data
+
+# Ensure `equipment_type` is a factor and sort levels for consistency
+survival_data <- survival_data %>%
+  mutate(equipment_type = as.factor(EQUIPMENT_DESC))
+
+# Removing NA values from equipment_type
+survival_data <- survival_data %>% 
+  filter(!is.na(equipment_type))
+
+# Get unique equipment types and split into groups of 5-7
+equipment_groups <- split(levels(survival_data$equipment_type), 
+                          ceiling(seq_along(levels(survival_data$equipment_type)) / 6))
+
+# Create a list to store plots
+plot_list <- list()
+
+# Loop through each group, fit survival curves, and create plots
+for (i in seq_along(equipment_groups)) {
+  
+  # Filter survival data for the current group of equipment types
+  group_data <- survival_data %>%
+    filter(equipment_type %in% equipment_groups[[i]])
+  
+  # Create a survival object for the group
+  surv_object_group <- Surv(time = group_data$time_to_failure, event = group_data$failure)
+  
+  # Fit Kaplan-Meier survival curves for the group
+  km_fit_group <- survfit(surv_object_group ~ equipment_type, data = group_data)
+  
+  # Plot the survival curves for the group without p-value
+  plot_list[[i]] <- ggsurvplot(
+    km_fit_group, data = group_data, conf.int = TRUE, pval = TRUE,
+    title = paste("Survival Curves for Equipment Types - Group", i),
+    xlab = "Time to Failure (Days)", ylab = "Survival Probability",
+    legend.title = "Equipment Type",
+    legend = "right",
+    ggtheme = theme_minimal(base_size = 10),
+    font.legend = 8,
+    palette = "Dark2"
+  )
+}
+
+# Display all plots one by one
+for (i in seq_along(plot_list)) {
+  print(plot_list[[i]])
+}
+
+```
+
+## Survival Analysis by FUNCTIONAL_AREA_NODE_2_MODIFIED
+
+```{r}
+library(gridExtra)
+
+# Ensure `equipment_type` is a factor and sort levels for consistency
+survival_data_1 <- filtered_data %>%
+  mutate(FUNCTIONAL_AREA_NODE_2_MODIFIED = as.factor(FUNCTIONAL_AREA_NODE_2_MODIFIED))
+
+# Remove NA values from FUNCTIONAL_AREA_NODE_2_MODIFIED
+survival_data_1 <- survival_data_1 %>%
+  filter(!is.na(FUNCTIONAL_AREA_NODE_2_MODIFIED))
+
+# Get unique FUNCTIONAL_AREA_NODE_2_MODIFIED and split into groups of 4
+equipment_groups_1 <- split(
+  unique(survival_data_1$FUNCTIONAL_AREA_NODE_2_MODIFIED),
+  ceiling(seq_along(unique(survival_data_1$FUNCTIONAL_AREA_NODE_2_MODIFIED)) / 4)
+)
+
+# Create a list to store plots
+plot_list <- list()
+
+# Loop through each group, fit survival curves, and create plots
+for (i in seq_along(equipment_groups_1)) {
+  
+  # Filter survival data for the current group of equipment types
+  group_data_2 <- survival_data_1 %>%
+    filter(FUNCTIONAL_AREA_NODE_2_MODIFIED %in% equipment_groups_1[[i]])
+  
+  # Skip if the group has insufficient data
+  if (nrow(group_data_2) == 0) next
+  
+  # Create a survival object for the group
+  surv_object_group_2 <- Surv(time = group_data_2$time_to_failure, event = group_data_2$failure)
+  
+  # Fit Kaplan-Meier survival curves for the group
+  km_fit_group_2 <- survfit(surv_object_group_2 ~ FUNCTIONAL_AREA_NODE_2_MODIFIED, data = group_data_2)
+  
+  # Plot the survival curves for the group without p-value
+  plot_list[[i]] <- ggsurvplot(
+    km_fit_group_2, data = group_data_2, conf.int = TRUE, pval = TRUE,
+    title = paste("Survival Curves for FUNCTIONAL_AREA_NODE_2_MODIFIED - Group", i),
+    xlab = "Time to Failure (Days)", ylab = "Survival Probability",
+    legend.title = "FUNCTIONAL_AREA_NODE_2_MODIFIED",
+    legend = "right",
+    ggtheme = theme_minimal(base_size = 10),
+    font.legend = 8,
+    palette = "Dark2"
+  )
+}
+
+# Display all plots one by one
+for (i in seq_along(plot_list)) {
+  if (!is.null(plot_list[[i]])) {
+    print(plot_list[[i]])
+  }
+}
+
+```
+
+
+
