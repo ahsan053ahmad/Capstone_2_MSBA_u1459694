@@ -14,15 +14,11 @@ This project focuses on providing Swire Coca-Cola with a robust, data-driven pre
 1. Developing a predictive maintenance model to forecast when machinery is likely to fail.
 2. Identifying high-risk equipment and uncovering patterns associated with failures.
 3. Enabling proactive maintenance scheduling by generating actionable insights, ensuring repairs are completed before breakdowns occur.
+
 By achieving these objectives, we aim to help Swire Coca-Cola move closer to maximizing production capacity and achieving their annual targets.
 
 ## **Group Solution**
-To address Swire Coca-Cola’s challenges, the team adopted a multi-faceted approach, leveraging individual strengths to tackle different aspects of the problem:
-
-We focused on survival analysis to predict machinery time-to-failure. We used Kaplan-Meier estimators to model survival probabilities and Cox Proportional Hazards models to identify risk factors associated with equipment failures.
-Secondly, we concentrated on forecasting production losses, and developing models to estimate the number of orders affected and the total downtime caused by machine failures.
-Lastly, we analyzed text-based work order data to uncover patterns in downtime causes and durations, providing contextual insights for maintenance planning.
-This collaborative approach ensured comprehensive coverage of both predictive and contextual aspects of the business problem.
+To address Swire Coca-Cola’s challenges, the team adopted a multi-faceted approach, leveraging individual strengths to tackle different aspects of the problem. The focus began with survival analysis, using Kaplan-Meier estimators to model survival probabilities and Cox Proportional Hazards models to identify risk factors contributing to equipment failures. Alongside this, the team developed models to forecast production losses, estimating the number of affected orders and total downtime caused by machine failures. Additionally, text-based work order data was analyzed to uncover patterns in the causes and durations of downtime, providing valuable contextual insights for maintenance planning. This collaborative strategy ensured a comprehensive solution addressing both predictive and contextual dimensions of the business problem.
 
 ## **My Contribution**
 My work was pivotal in providing a statistical foundation for predictive maintenance through Survival Analysis. Key contributions included:
