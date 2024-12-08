@@ -35,6 +35,7 @@ The implementation of this predictive maintenance model offers significant benef
 2. **Enhanced Production Efficiency**: By improving equipment availability, Swire Coca-Cola could aim for production efficiency rates exceeding 98%, narrowing the gap toward full capacity.
 3. **Data-Driven Decision Making**: The solution provides prioritized insights, helping maintenance teams focus on high-risk machinery and allocate resources effectively.
 4. **Improved Resource Planning**: Spare parts and labor could be pre-positioned for maintenance tasks, minimizing delays and disruptions.
+
 These benefits not only mitigate immediate losses but also contribute to long-term operational resilience and sustainability.
 
 ## **Challenges Encountered**
